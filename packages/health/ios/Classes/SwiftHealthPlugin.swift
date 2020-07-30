@@ -76,7 +76,7 @@ public class SwiftHealthPlugin: NSObject, FlutterPlugin {
             healthStore.requestAuthorization(toShare: nil, read: allDataTypes) { (success, error) in
                 result(success)
             }
-        } 
+        }
         else {
             result(false)// Handle the error here.
         }
@@ -91,31 +91,39 @@ public class SwiftHealthPlugin: NSObject, FlutterPlugin {
         // Convert dates from milliseconds to Date()
         let dateFrom = Date(timeIntervalSince1970: startDate.doubleValue / 1000)
         let dateTo = Date(timeIntervalSince1970: endDate.doubleValue / 1000)
+        let predicate = HKStatisticsQuery.predicateForSamples(withStart: dateFrom, end: dateTo, options: .strictStartDate)
+        
+        var interval = DateComponents()
+        interval.day = 1
+        
+        let calendar = Calendar.current
+        let anchorDate = calendar.date(bySettingHour: 0, minute: 0, second: 0, of: dateFrom)
 
-        let dataType = dataTypeLookUp(key: dataTypeKey)
-        let predicate = HKStatisticsQuery(withStart: dateFrom, end: dateTo, options: .cumulativeSum)
-        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: true)
+        let query = HKStatisticsCollectionQuery.init(quantityType: dataTypeLookUp(key: dataTypeKey) as! HKQuantityType,
+                                                     quantitySamplePredicate: predicate,
+                                                     options: .cumulativeSum,
+                                                     anchorDate: anchorDate!,
+                                                     intervalComponents: interval)
+        
+        query.initialResultsHandler = {
+            query, results, error in
+            let startDate = calendar.startOfDay(for: dateFrom)
+            var array = Array<[String : Any]>()
+            results?.enumerateStatistics(from: startDate,
+                                         to: Date(), with: { (resultValue, stop) in
 
-        let query = HKSampleQuery(sampleType: dataType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sortDescriptor]) {
-            x, samplesOrNil, error in
-
-            guard let samples = samplesOrNil as? [HKQuantitySample] else {
-                result(FlutterError(code: "FlutterHealth", message: "Results are null", details: "\(error)"))
-                return
-            }
-
-            if (samples != nil){
-                result(samples.map { sample -> NSDictionary in
-                    let unit = self.unitLookUp(key: dataTypeKey)
-                    
-                    return [
-                        "value": sample.quantity.doubleValue(for: unit),
-                        "date_from": Int(sample.startDate.timeIntervalSince1970 * 1000),
-                        "date_to": Int(sample.endDate.timeIntervalSince1970 * 1000),
-                    ]
-                })
-            }
-            return
+                                        let unit = self.unitLookUp(key: dataTypeKey)
+                                           let value =  [
+                                            "value": resultValue.sumQuantity()?.doubleValue(for: unit) ?? 0,
+                                                                    "date_from": Int(resultValue.startDate.timeIntervalSince1970 * 1000),
+                                                                    "date_to": Int(resultValue.endDate.timeIntervalSince1970 * 1000),
+                                            ] as [String : Any];
+                                            array.append(value)
+                        
+                                            
+            })
+            
+            result(array)
         }
         HKHealthStore().execute(query)
     }
@@ -154,7 +162,7 @@ public class SwiftHealthPlugin: NSObject, FlutterPlugin {
         unitDict[WEIGHT] = HKUnit.gramUnit(with: .kilo)
 
         // Set up iOS 11 specific types (ordinary health data types)
-        if #available(iOS 11.0, *) { 
+        if #available(iOS 11.0, *) {
             dataTypesDict[BODY_FAT_PERCENTAGE] = HKSampleType.quantityType(forIdentifier: .bodyFatPercentage)!
             dataTypesDict[HEIGHT] = HKSampleType.quantityType(forIdentifier: .height)!
             dataTypesDict[BODY_MASS_INDEX] = HKSampleType.quantityType(forIdentifier: .bodyMassIndex)!
@@ -193,7 +201,3 @@ public class SwiftHealthPlugin: NSObject, FlutterPlugin {
     }
     
 }
-
-
-
-
